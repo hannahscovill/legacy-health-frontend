@@ -14,6 +14,9 @@ resource "aws_s3_bucket" "legacy_frontend" {
   bucket = "${var.app_name}-frontend"
 }
 
+# could be managed here or as data, pulled in from another stack or manual
+# The tf apply for the first time is likely to fail while linking the
+# CF distribution to the cert if the cert isn't already valid
 resource "aws_acm_certificate" "legacy_frontend" {
   domain_name       = var.domain_name
   validation_method = "DNS"
