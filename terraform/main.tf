@@ -2,7 +2,7 @@ terraform {
   backend "s3" {
     bucket = "terraform-state-calamari"
     region = "us-west-2"
-    key    = "resume-site"
+    key    = "legacy-frontend"
   }
 }
 
