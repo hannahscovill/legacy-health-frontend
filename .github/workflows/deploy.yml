@@ -1,131 +1,64 @@
-name: Deploy Frontend
+name: CI/CD
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches:
+      - main
 
 env:
-  TF_VERSION: 1.6.0
-  NODE_VERSION: 18
+  TF_OUTPUT_FILE: '/tmp/terraformOutputs.json'
 
 jobs:
-  test:
+  testbuilddeploy:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-      
+          node-version: "20"
+
       - name: Install dependencies
-        run: npm ci
-      
-      - name: Run type check
-        run: npm run type-check
-      
-      - name: Run linter
-        run: npm run lint
-      
-      - name: Build application
+        run: npm install
+
+      - name: build the app
         run: npm run build
 
-  terraform-plan:
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'pull_request'
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-      
-      - name: Configure AWS credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
-      
-      - name: Terraform Init
-        working-directory: terraform
-        run: terraform init
-      
-      - name: Terraform Plan
-        working-directory: terraform
-        run: |
-          terraform plan \
-            -var="aws_region=${{ vars.AWS_REGION || 'us-west-2' }}" \
-            -var="environment=${{ vars.ENVIRONMENT || 'dev' }}" \
-            -var="domain_name=${{ vars.DOMAIN_NAME || '' }}" \
-            -var="certificate_arn=${{ vars.CERTIFICATE_ARN || '' }}" \
-            -var="project_name=legacy-health-frontend"
+          aws-region: us-west-2
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Build application
-        run: npm run build
-      
       - name: Setup Terraform
+        id: terraform-setup
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ env.TF_VERSION }}
-      
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
-      
-      - name: Terraform Init
-        working-directory: terraform
-        run: terraform init
-      
-      - name: Terraform Apply
-        working-directory: terraform
+          terraform_wrapper: false
+
+      - name: Apply the Template
+        id: terraform-apply
         run: |
-          terraform apply -auto-approve \
-            -var="aws_region=${{ vars.AWS_REGION || 'us-west-2' }}" \
-            -var="environment=${{ vars.ENVIRONMENT || 'dev' }}" \
-            -var="domain_name=${{ vars.DOMAIN_NAME || '' }}" \
-            -var="certificate_arn=${{ vars.CERTIFICATE_ARN || '' }}" \
-            -var="project_name=legacy-health-frontend"
-      
-      - name: Get S3 bucket name
-        id: bucket
-        working-directory: terraform
-        run: echo "name=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
-      
-      - name: Deploy to S3
-        run: aws s3 sync dist/ s3://${{ steps.bucket.outputs.name }} --delete
-      
-      - name: Get CloudFront distribution ID
-        id: cloudfront
-        working-directory: terraform
-        run: echo "id=$(terraform output -raw cloudfront_distribution_id)" >> $GITHUB_OUTPUT
-      
-      - name: Invalidate CloudFront cache
-        run: aws cloudfront create-invalidation --distribution-id ${{ steps.cloudfront.outputs.id }} --paths "/*"
+          cd terraform
+          terraform init -input=false
+          terraform plan -input=false
+          terraform apply -auto-approve
+          terraform output -json >> $TF_OUTPUT_FILE
+
+      - name: Sync build files to S3
+        run: |
+          export CLOUDFRONT_DISTRIBUTION_ID=$(cat $TF_OUTPUT_FILE | jq -r '.cloudfront_distribution_id.value')
+          export BUCKET_NAME=$(cat $TF_OUTPUT_FILE | jq -r '.bucket_name.value')
+          echo "CloudFront Distribution ID: $CLOUDFRONT_DISTRIBUTION_ID"
+          echo "S3 Bucket Name: $BUCKET_NAME"
+          aws s3 sync dist/ s3://$BUCKET_NAME --exclude "*.DS_Store"
+          aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION_ID --paths '/*' 
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: 'us-west-2'

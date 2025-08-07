@@ -4,25 +4,14 @@ variable "aws_region" {
   default     = "us-west-2"
 }
 
-variable "environment" {
-  description = "Environment name"
+variable "app_name" {
+  description = "Name of the application, used for resource naming"
   type        = string
-  default     = "dev"
+  default     = "legacy-builder"
 }
 
 variable "domain_name" {
   description = "Domain name for the website"
   type        = string
-}
-
-variable "certificate_arn" {
-  description = "ARN of the SSL certificate"
-  type        = string
-  default     = ""
-}
-
-variable "project_name" {
-  description = "Name of the project"
-  type        = string
-  default     = "legacy-health-frontend"
+  default     = "leagacybuilder.dev"
 }
