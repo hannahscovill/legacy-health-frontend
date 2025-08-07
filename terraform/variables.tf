@@ -13,5 +13,5 @@ variable "app_name" {
 variable "domain_name" {
   description = "Domain name for the website"
   type        = string
-  default     = "leagacybuilder.dev"
+  default     = "legacybuilder.dev"
 }
